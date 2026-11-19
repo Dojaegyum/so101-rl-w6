@@ -11,6 +11,8 @@
 | 06 (W6) | 목표 범위 설계 (상자·구·높이·보상) | `tasks/w6_w7_tasks.py`, `scripts/w6.sh` |
 | 07 (W7) | 도메인 랜덤화 | `tasks/w6_w7_tasks.py`, `scripts/w7.sh` |
 
+`tasks/w6_w7_tasks.py`는 노션 06·07의 `cat >> so101_reach.py` 블록을 순서대로 그대로 모은 파일이다.
+
 경로는 노션과 같다. 예제는 `~/robotics/isaaclab-so101`(커밋 `0284f4a` 고정)에 받고, ONNX는 `~/robotics/so101-deploy/`에 모은다.
 `ROBOTICS_DIR=/다른/경로`로 바꿀 수 있다.
 
@@ -115,36 +117,26 @@ mkdir -p ~/robotics && tar -xzf so101_results_*.tar.gz -C ~/robotics so101-deplo
 
 | 항목 | 노션 | 이 레포 | 이유 |
 |---|---|---|---|
-| 07 §3 DR 코드 | 토글 안 코드 | **새로 작성** (`tasks/w6_w7_tasks.py` 끝) | 노션 내보내기에 토글 내용이 빠져 있었다. 07 §1 표의 값과 Isaac Lab 3.0.0 API로 다시 썼다 |
 | 06 코드 덧붙이기 | `cat >>` 블록 4개 | `apply_tasks.sh`가 원본에서 다시 만든다 | 두 번 붙여 넣어 생기는 `Cannot re-register id` 오류가 나지 않는다 |
 | 보상·DR 값 바꾸기 | `sed` 또는 VS Code | `tools/set_value.py` (튜플 값도 처리) | 실험이 끝나면 자동으로 원래 값으로 되돌린다 |
 | 04 §6 check_onnx | conda env `lerobot` | Isaac 환경 + 임시 onnxruntime | 데스크탑에는 lerobot이 없을 수 있다 |
 | "학습 환경 켜기" 블록 | `while conda deactivate` 반복 | conda 변수를 직접 지운다 | conda init이 안 된 셸에서는 노션의 반복문이 끝나지 않는다 |
 | 학습 실패 판단 | 눈으로 확인 | 종료 코드 + 로그의 `Traceback` | `isaaclab train`은 Python 오류로 죽어도 종료 코드 0을 낼 때가 있다 |
 
-### 07 DR 구현 (검증 필요)
+### 검증 상태
 
-| 노션 07 §1 설정 | 구현 |
-|---|---|
-| `joint_pos_bias` ±0.03, `joint_pos_noise` ±0.01 | `NoiseModelWithAdditiveBiasCfg`. bias는 reset 때 관절마다 새로 뽑는다 |
-| `joint_vel_noise` ±0.1 | 관절 속도 관측의 `UniformNoiseCfg` |
-| `obs_delay_max` 1 | 관절 위치·속도 관측의 `delay_max_lag`. 목표와 직전 행동은 지연하지 않는다 |
-| `mass_scale` ×0.8~1.2 | `randomize_rigid_body_mass` (startup, scale) |
-| `gain_scale` ×0.7~1.3 | `randomize_actuator_gains` 강성·감쇠 (startup, scale) |
-| `joint_friction` 꺼짐 | `randomize_joint_parameters` (startup, abs). `(0.0, 0.0)`이면 등록하지 않는다 |
-
-로컬(GPU 없음)에서 확인한 것은 여기까지다.
+GPU가 없는 노트북에서는 아래까지만 확인했다.
 - 과제 7개가 모두 등록된다.
-- 설정 객체가 만들어지고 값이 의도대로 들어간다.
+- 설정 객체가 만들어지고, 보상·DR 값이 의도대로 들어간다.
 - 스크립트 흐름(체크포인트 기록, 영상 대기, ONNX 복사, 원래 값 복원)은 가짜 학습 명령으로 시험했다.
 
-실제 학습은 GPU가 있어야 해서 돌려 보지 못했다. 데스크탑에서 `scripts/w7.sh smoke`가 처음 실제로 확인하는 단계다.
+실제 학습은 돌려 보지 않았다. 노션도 06 §5-1과 07이 "GPU에서 학습해 보지 않았다"고 적고 있다.
 
 ## 파일 구성
 
 | 파일 | 역할 |
 |---|---|
-| `tasks/w6_w7_tasks.py` | 06(상자·재생·구·높이·보상) 노션 원문 + 07 DR 과제 |
+| `tasks/w6_w7_tasks.py` | 06(상자·재생·구·높이·보상)·07(DR) 노션 원문 |
 | `scripts/env.sh` | 공통: 경로, conda 정리, 학습·재생·내보내기 함수 |
 | `scripts/apply_tasks.sh` | 원본 `so101_reach.py`에 과제 덧붙이기 / `--reset`으로 원본 복원 |
 | `scripts/w3.sh` `w4.sh` `w6.sh` `w7.sh` | 장별 실행 |

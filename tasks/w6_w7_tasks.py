@@ -1,5 +1,5 @@
 # W6·W7 실습 과제. scripts/apply_tasks.sh 가 원본 so101_reach.py 끝에 이 파일을 덧붙인다.
-# 06 부분은 노션 W6 문서의 cat >> 블록을 순서대로 그대로 옮겼다. 07 부분만 새로 작성했다.
+# 06·07 모두 노션 문서의 cat >> 블록을 순서대로 그대로 옮겼다.
 
 # ===== 06: 목표 범위를 내가 정한 과제 =====
 import os
@@ -154,74 +154,80 @@ gym.register(
     },
 )
 
-# ===== 07: 도메인 랜덤화 (구 과제 + DR) =====
-# 노션 07 §3의 코드는 내보내기에 빠져 있어 07 §1 표의 값으로 다시 작성했다 (Isaac Lab 3.0.0 API).
-# 실험할 때는 이 숫자만 바꾼다. 괄호 안이 07 §1의 기본값이다. "끄기"는 (1.0, 1.0) 또는 0.
-DR = {
-    "joint_pos_bias": 0.03,        # 에피소드마다 고정되는 관절 각도 오차 ±rad (0.03 ≈ ±1.7°)
-    "joint_pos_noise": 0.01,       # 매 step 관절 각도 잡음 ±rad (원래 값과 같음)
-    "joint_vel_noise": 0.1,        # 관절 속도 잡음 ±rad/s (원래 ±0.01)
-    "obs_delay_max": 1,            # 관절 관측 지연 0~N step (1 step = 33 ms)
-    "mass_scale": (0.8, 1.2),      # 링크 질량 배율
-    "gain_scale": (0.7, 1.3),      # 모터 강성·감쇠(PD 게인) 배율
-    "joint_friction": (0.0, 0.0),  # 관절 마찰 (꺼짐. 8번에서 (0.0, 0.05)로 켠다)
-}
-
+# ===== 07: 06의 구 과제 + 도메인 랜덤화 =====
 from isaaclab.managers import EventTermCfg as EventTerm
-from isaaclab.utils.noise import NoiseModelWithAdditiveBiasCfg, UniformNoiseCfg
+from isaaclab.utils.noise import NoiseModelWithAdditiveBiasCfg
+from isaaclab.utils.noise import UniformNoiseCfg as Unoise
+from isaaclab_tasks.core.reach.reach_env_cfg import EventCfg
+
+# 실험할 때 바꿀 값은 여기에 모아 둔다. (0.0, 0.0)이나 (1.0, 1.0), 0은 "끄기"다.
+DR = {
+    "joint_pos_bias": 0.03,  # [rad] 에피소드마다 관절별로 고정된 각도 오차 ±0.03 rad (약 ±1.7°). 캘리브레이션 오차 흉내
+    "joint_pos_noise": 0.01,  # [rad] 매 step 바뀌는 각도 잡음. 원래 값과 같다
+    "joint_vel_noise": 0.10,  # [rad/s] 속도 잡음. 원래 0.01. 실기는 속도를 차분으로 계산해 잡음이 크다
+    "obs_delay_max": 1,  # [step] 관측 지연 0~1 step (0~33 ms). USB 통신 지연 흉내
+    "mass_scale": (0.8, 1.2),  # 링크 질량 ×0.8~1.2
+    "gain_scale": (0.7, 1.3),  # 모터 강성·감쇠 ×0.7~1.3. 모터 힘·반응 속도 차이 흉내
+    "joint_friction": (0.0, 0.0),  # 관절 마찰 계수에 더할 값. 8번에서 켠다 (예: (0.0, 0.05))
+}
 
 
 @configclass
-class SO101ReachSphereDREnvCfg(SO101ReachSphereEnvCfg):  # 06 §5의 구 과제를 물려받는다
+class SO101ReachDREventCfg(EventCfg):
+    """원래 이벤트(reset_robot_joints)에 물리 값 랜덤화를 더한다. startup: 시작할 때 로봇마다 한 번 뽑는다."""
+
+    robot_mass = EventTerm(
+        func=mdp.randomize_rigid_body_mass,
+        mode="startup",
+        params={
+            "asset_cfg": SceneEntityCfg("robot", body_names=".*"),
+            "mass_distribution_params": DR["mass_scale"],
+            "operation": "scale",
+        },
+    )
+    actuator_gains = EventTerm(
+        func=mdp.randomize_actuator_gains,
+        mode="startup",
+        params={
+            "asset_cfg": SceneEntityCfg("robot", joint_names=".*"),
+            "stiffness_distribution_params": DR["gain_scale"],
+            "damping_distribution_params": DR["gain_scale"],
+            "operation": "scale",
+        },
+    )
+    joint_friction = EventTerm(
+        func=mdp.randomize_joint_parameters,
+        mode="startup",
+        params={
+            "asset_cfg": SceneEntityCfg("robot", joint_names=".*"),
+            "friction_distribution_params": DR["joint_friction"],
+            "operation": "add",
+        },
+    )
+
+
+@configclass
+class SO101ReachSphereDREnvCfg(SO101ReachSphereEnvCfg):  # 06의 구 과제를 물려받는다
     def __post_init__(self) -> None:
         super().__post_init__()
-        policy = self.observations.policy
+        self.events = SO101ReachDREventCfg()
 
-        # 관측 쪽: 캘리브레이션 오차(bias) + 센서 잡음, 속도 잡음, 통신 지연
-        bias, noise = DR["joint_pos_bias"], DR["joint_pos_noise"]
-        if bias > 0:
-            policy.joint_pos.noise = NoiseModelWithAdditiveBiasCfg(
-                noise_cfg=UniformNoiseCfg(n_min=-noise, n_max=noise),
-                bias_noise_cfg=UniformNoiseCfg(n_min=-bias, n_max=bias),  # reset 때 관절마다 새로 뽑는다
-            )
-        else:
-            policy.joint_pos.noise = UniformNoiseCfg(n_min=-noise, n_max=noise)
-        policy.joint_vel.noise = UniformNoiseCfg(n_min=-DR["joint_vel_noise"], n_max=DR["joint_vel_noise"])
-        for term in (policy.joint_pos, policy.joint_vel):
-            term.delay_min_lag = 0
-            term.delay_max_lag = int(DR["obs_delay_max"])  # 에피소드마다 0~N step 중 하나를 뽑아 유지한다
-
-        # 물리 쪽: 시작할 때 로봇마다 한 번 뽑아 학습 내내 유지한다
-        robot_bodies = SceneEntityCfg("robot", body_names=".*")
-        robot_joints = SceneEntityCfg("robot", joint_names=".*")
-        if tuple(DR["mass_scale"]) != (1.0, 1.0):
-            self.events.dr_mass = EventTerm(
-                func=mdp.randomize_rigid_body_mass,
-                mode="startup",
-                params={"asset_cfg": robot_bodies, "mass_distribution_params": DR["mass_scale"], "operation": "scale"},
-            )
-        if tuple(DR["gain_scale"]) != (1.0, 1.0):
-            self.events.dr_gains = EventTerm(
-                func=mdp.randomize_actuator_gains,
-                mode="startup",
-                params={
-                    "asset_cfg": robot_joints,
-                    "stiffness_distribution_params": DR["gain_scale"],
-                    "damping_distribution_params": DR["gain_scale"],
-                    "operation": "scale",
-                },
-            )
-        if tuple(DR["joint_friction"]) != (0.0, 0.0):
-            self.events.dr_friction = EventTerm(
-                func=mdp.randomize_joint_parameters,
-                mode="startup",
-                params={"asset_cfg": robot_joints, "friction_distribution_params": DR["joint_friction"], "operation": "abs"},
-            )
+        obs = self.observations.policy
+        # 관절 위치: 매 step 잡음 + 에피소드마다 고정된 오차(bias)
+        obs.joint_pos.noise = NoiseModelWithAdditiveBiasCfg(
+            noise_cfg=Unoise(n_min=-DR["joint_pos_noise"], n_max=DR["joint_pos_noise"]),
+            bias_noise_cfg=Unoise(n_min=-DR["joint_pos_bias"], n_max=DR["joint_pos_bias"]),
+        )
+        obs.joint_vel.noise = Unoise(n_min=-DR["joint_vel_noise"], n_max=DR["joint_vel_noise"])
+        # 관측 지연: 로봇마다 0~obs_delay_max step 늦은 값을 보여 준다
+        obs.joint_pos.delay_max_lag = DR["obs_delay_max"]
+        obs.joint_vel.delay_max_lag = DR["obs_delay_max"]
 
 
 @configclass
 class SO101ReachSphereDRPPORunnerCfg(SO101ReachSpherePPORunnerCfg):
-    experiment_name = "reach_so101_sphere_dr"  # 로그를 logs/rsl_rl/reach_so101_sphere_dr/ 에 따로 모은다
+    experiment_name = "reach_so101_sphere_dr"  # 로그를 logs/rsl_rl/reach_so101_sphere_dr/ 에 따로 저장
+    max_iterations = 600  # 06의 구 학습과 같게 둬서 공정하게 비교한다
 
 
 gym.register(
