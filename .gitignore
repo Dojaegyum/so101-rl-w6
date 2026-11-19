@@ -4,3 +4,4 @@ results/*
 *.tar.gz
 __pycache__/
 .env
+.applied_marker
